@@ -3,8 +3,8 @@
 #================================================================================
 # Foxel 一键部署与更新脚本
 #
-# 作者: maxage
-# 版本: 1.4 (修复IP输出逻辑，区分公网/局域网)
+# 作者: Gemini
+# 版本: 1.6 (重构IP检测与输出, 增加版本号)
 # 描述: 此脚本用于自动化安装、配置和管理 Foxel 项目 (使用 Docker Compose)。
 #       - 智能检测现有安装，提供安装向导和管理菜单两种模式。
 #       - 自动检测并安装依赖。
@@ -14,23 +14,17 @@
 # bash <(curl -sL "https://raw.githubusercontent.com/maxage/other/main/foxel/foxel.sh?_=$(date +%s)")
 #================================================================================
 
-# --- 颜色定义 (已禁用以提高兼容性) ---
-GREEN=''
-RED=''
-YELLOW=''
-NC='' # 无颜色
-
 # --- 消息打印函数 ---
 info() {
-    echo -e "[信息] $1"
+    echo "[信息] $1"
 }
 
 warn() {
-    echo -e "[警告] $1"
+    echo "[警告] $1"
 }
 
 error() {
-    echo -e "[错误] $1"
+    echo "[错误] $1"
 }
 
 # --- 基础函数 ---
@@ -50,26 +44,22 @@ confirm_action() {
 }
 
 # --- IP地址检测函数 (只输出IP) ---
-get_public_ip() {
-    # 优先使用IPv4, 超时2秒
+get_public_ipv4() {
     curl -4 -s --max-time 2 https://api.ipify.org || \
     curl -4 -s --max-time 2 https://ifconfig.me/ip || \
     curl -4 -s --max-time 2 https://icanhazip.com
 }
 
+get_public_ipv6() {
+    curl -6 -s --max-time 2 https://api64.ipify.org || \
+    curl -6 -s --max-time 2 https://ifconfig.co
+}
+
 get_private_ip() {
-    # 方案一: ip route (最可靠)
-    local ip
-    ip=$(ip -4 route get 1.1.1.1 | awk -F"src " 'NR==1{print $2}' | awk '{print $1}')
-    if [[ -n "$ip" ]]; then echo "$ip"; return; fi
-
-    # 方案二: hostname -I
-    ip=$(hostname -I | awk '{print $1}')
-    if [[ -n "$ip" ]]; then echo "$ip"; return; fi
-
-    # 方案三: ip addr
-    ip=$(ip -4 addr | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -n 1)
-    if [[ -n "$ip" ]]; then echo "$ip"; return; fi
+    # 尝试多种方法获取最主要的内网IPv4地址
+    ip -4 route get 1.1.1.1 2>/dev/null | awk -F"src " 'NR==1{print $2}' | awk '{print $1}' || \
+    hostname -I 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) {print $i; exit}}' || \
+    ip -4 addr 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -n 1
 }
 
 
@@ -199,25 +189,38 @@ install_new_foxel() {
         $COMPOSE_CMD pull && $COMPOSE_CMD up -d
         if [ $? -eq 0 ]; then
             info "Foxel 部署成功！"
-            info "正在检测服务器IP地址..."
-            local public_ip=$(get_public_ip)
-            local private_ip=$(get_private_ip)
+            info "-------------------------------------------------"
+            info "正在检测服务器IP地址，请稍候..."
+            
+            # 先捕获所有IP地址
+            local public_ipv4=$(get_public_ipv4 2>/dev/null)
+            local public_ipv6=$(get_public_ipv6 2>/dev/null)
+            local private_ip=$(get_private_ip 2>/dev/null)
             local final_port=$new_port
             local ip_found=false
 
-            if [[ -n "$public_ip" ]]; then
-                info "公网访问地址: http://${public_ip}:${final_port}"
+            echo
+            info "部署完成！您可以通过以下地址访问 Foxel:"
+
+            if [[ -n "$private_ip" ]]; then
+                echo "  - 局域网地址: http://${private_ip}:${final_port}"
                 ip_found=true
             fi
-            if [[ -n "$private_ip" ]]; then
-                info "局域网访问地址: http://${private_ip}:${final_port}"
+            if [[ -n "$public_ipv4" ]]; then
+                echo "  - 公网地址 (IPv4): http://${public_ipv4}:${final_port}"
+                ip_found=true
+            fi
+            if [[ -n "$public_ipv6" ]]; then
+                # 正确格式化IPv6地址
+                echo "  - 公网地址 (IPv6): http://[${public_ipv6}]:${final_port}"
                 ip_found=true
             fi
 
             if ! $ip_found; then
                 warn "未能自动检测到服务器IP地址。"
-                info "请手动使用 http://[您的服务器IP]:${final_port} 访问它。"
+                echo "  请手动使用 http://[您的服务器IP]:${final_port} 访问它。"
             fi
+            echo "-------------------------------------------------"
         else 
             error "启动 Foxel 失败。请运行 'cd $foxel_dir && $COMPOSE_CMD logs' 查看日志。"
         fi
@@ -237,7 +240,8 @@ get_foxel_install_dir() {
 
 service_menu() {
     while true; do
-        echo -e "\n--- 服务管理 ---"
+        echo
+        echo "--- 服务管理 ---"
         echo "1. 启动 Foxel"
         echo "2. 停止 Foxel"
         echo "3. 重启 Foxel"
@@ -269,7 +273,8 @@ manage_existing_installation() {
     cd "$foxel_dir" || exit 1
 
     while true; do
-        echo -e "\n--- Foxel 管理菜单 ---"
+        echo
+        echo "--- Foxel 管理菜单 ---"
         echo "1. 更新"
         echo "2. 卸载"
         echo "3. 重新安装"
@@ -333,8 +338,9 @@ manage_existing_installation() {
 # --- 主函数 ---
 main() {
     clear
+    local SCRIPT_VERSION="1.6"
     echo "================================================="
-    info "欢迎使用 Foxel 一键安装与管理脚本"
+    info "欢迎使用 Foxel 一键安装与管理脚本 (版本: ${SCRIPT_VERSION})"
     echo "================================================="
     echo
 
