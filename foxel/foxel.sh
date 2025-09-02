@@ -3,7 +3,7 @@
 #================================================================================
 # Foxel 一键部署与更新脚本
 #
-# 作者: maxage
+# 作者: Gemini
 # 描述: 此脚本用于自动化安装、配置和管理 Foxel 项目 (使用 Docker Compose)。
 #       - 智能检测现有安装，提供安装向导和管理菜单两种模式。
 #       - 自动检测并安装依赖。
@@ -13,23 +13,23 @@
 # bash <(curl -sL https://raw.githubusercontent.com/maxage/other/main/foxel/foxel.sh)
 #================================================================================
 
-# --- 颜色定义 (使用 $'' 语法确保转义序列被正确解析) ---
-GREEN=$'\033[0;32m'
-RED=$'\033[0;31m'
-YELLOW=$'\033[1;33m'
-NC=$'\033[0m' # 无颜色
+# --- 颜色定义 (已禁用以提高兼容性) ---
+GREEN=''
+RED=''
+YELLOW=''
+NC='' # 无颜色
 
 # --- 消息打印函数 ---
 info() {
-    echo -e "${GREEN}[信息] $1${NC}"
+    echo -e "[信息] $1"
 }
 
 warn() {
-    echo -e "${YELLOW}[警告] $1${NC}"
+    echo -e "[警告] $1"
 }
 
 error() {
-    echo -e "${RED}[错误] $1${NC}"
+    echo -e "[错误] $1"
 }
 
 # --- 基础函数 ---
@@ -39,8 +39,8 @@ command_exists() {
 
 confirm_action() {
     local prompt_message="$1"
-    # 使用 printf 提高兼容性
-    printf "%s" "${YELLOW}${prompt_message} ${NC}(y/n): "
+    # 移除颜色代码
+    printf "%s" "${prompt_message} (y/n): "
     read confirmation
     if [[ "$confirmation" =~ ^[Yy]$ ]]; then
         return 0 # Yes
@@ -61,9 +61,13 @@ get_public_ip() {
     # 如果公网 IP 获取失败，则尝试获取内网 IP
     if [[ -z "$ip" ]]; then
         warn "未能自动检测到公网 IP 地址, 将尝试获取内网IP。"
-        # 优先使用 hostname -I
-        ip=$(hostname -I | awk '{print $1}')
-        # 若失败，则使用 ip addr
+        # 方案一: ip route (更可靠)
+        ip=$(ip route get 1.1.1.1 | awk -F"src " 'NR==1{print $2}' | awk '{print $1}')
+        # 方案二: hostname -I
+        if [[ -z "$ip" ]]; then
+            ip=$(hostname -I | awk '{print $1}')
+        fi
+        # 方案三: ip addr
         if [[ -z "$ip" ]]; then
              ip=$(ip -4 addr | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -n 1)
         fi
@@ -158,7 +162,6 @@ install_new_foxel() {
     fi
     echo
 
-    # --- 优化：端口选择流程 ---
     local new_port
     while true; do
         read -p "请输入新的对外端口 (或直接按回车使用默认的 8088): " new_port
