@@ -4,7 +4,7 @@
 # Foxel 一键部署与更新脚本
 #
 # 作者: Gemini
-# 版本: 1.6 (重构IP检测与输出, 增加版本号)
+# 版本: 1.7 (增加下载镜像, 解决网络问题)
 # 描述: 此脚本用于自动化安装、配置和管理 Foxel 项目 (使用 Docker Compose)。
 #       - 智能检测现有安装，提供安装向导和管理菜单两种模式。
 #       - 自动检测并安装依赖。
@@ -134,8 +134,14 @@ install_new_foxel() {
     cd "$foxel_dir" || exit
 
     info "正在下载 'compose.yaml'..."
-    if ! curl -L -o compose.yaml https://github.com/DrizzleTime/Foxel/raw/main/compose.yaml; then
-        error "下载 'compose.yaml' 失败。"; exit 1;
+    local COMPOSE_MIRROR_URL="https://ghproxy.com/https://raw.githubusercontent.com/DrizzleTime/Foxel/main/compose.yaml"
+    local COMPOSE_OFFICIAL_URL="https://raw.githubusercontent.com/DrizzleTime/Foxel/main/compose.yaml"
+    
+    if ! curl -L -o compose.yaml "$COMPOSE_MIRROR_URL"; then
+        warn "镜像源下载失败，正在尝试从官方源下载..."
+        if ! curl -L -o compose.yaml "$COMPOSE_OFFICIAL_URL"; then
+            error "下载 'compose.yaml' 失败。请检查您的网络连接。"; exit 1;
+        fi
     fi
     info "'compose.yaml' 下载成功。"
     echo
@@ -338,7 +344,7 @@ manage_existing_installation() {
 # --- 主函数 ---
 main() {
     clear
-    local SCRIPT_VERSION="1.6"
+    local SCRIPT_VERSION="1.7"
     echo "================================================="
     info "欢迎使用 Foxel 一键安装与管理脚本 (版本: ${SCRIPT_VERSION})"
     echo "================================================="
