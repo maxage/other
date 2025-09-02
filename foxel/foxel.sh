@@ -3,21 +3,21 @@
 #================================================================================
 # Foxel 一键部署与更新脚本
 #
-# 作者: maxage
+# 作者: Gemini
 # 描述: 此脚本用于自动化安装、配置和管理 Foxel 项目 (使用 Docker Compose)。
 #       - 智能检测现有安装，提供安装向导和管理菜单两种模式。
 #       - 自动检测并安装依赖。
 #       - 为国内用户提供镜像源切换选项。
 #
-# 一键运行命令 (假设脚本已上传到 GitHub):
-# bash <(curl -sL https://raw.githubusercontent.com/maxage/other/refs/heads/main/foxel/foxel.sh)
+# 一键运行命令:
+# bash <(curl -sL https://raw.githubusercontent.com/maxage/other/main/foxel/foxel.sh)
 #================================================================================
 
-# --- 颜色定义 ---
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # 无颜色
+# --- 颜色定义 (使用 $'' 语法确保转义序列被正确解析) ---
+GREEN=$'\033[0;32m'
+RED=$'\033[0;31m'
+YELLOW=$'\033[1;33m'
+NC=$'\033[0m' # 无颜色
 
 # --- 消息打印函数 ---
 info() {
@@ -39,12 +39,33 @@ command_exists() {
 
 confirm_action() {
     local prompt_message="$1"
+    # 使用 $'' 定义的颜色变量，read -p 可以正确显示颜色
     read -p "${YELLOW}${prompt_message} ${NC}(y/n): " confirmation
     if [[ "$confirmation" =~ ^[Yy]$ ]]; then
         return 0 # Yes
     else
         return 1 # No
     fi
+}
+
+# --- 新增：获取公网 IP ---
+get_public_ip() {
+    info "正在检测服务器 IP 地址..."
+    # 尝试多个服务以提高可靠性，并设置超时
+    local ip
+    ip=$(curl -s --max-time 5 https://ifconfig.me/ip)
+    if [[ -z "$ip" ]]; then
+        ip=$(curl -s --max-time 5 https://api.ipify.org)
+    fi
+    if [[ -z "$ip" ]]; then
+        ip=$(curl -s --max-time 5 https://icanhazip.com)
+    fi
+    # 如果公网 IP 获取失败，则尝试获取内网 IP
+    if [[ -z "$ip" ]]; then
+        warn "未能自动检测到公网 IP 地址, 将尝试获取内网IP。"
+        ip=$(ip -4 addr | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -n 1)
+    fi
+    echo "$ip"
 }
 
 # --- 依赖与环境检查 ---
@@ -124,7 +145,6 @@ install_new_foxel() {
     info "'compose.yaml' 下载成功。"
     echo
 
-    # --- 新增：镜像源选择 ---
     if confirm_action "您的服务器是否位于中国大陆（以便为您选择更快的镜像源）？"; then
         info "正在切换到国内镜像源..."
         sed -i 's|^\( *\)image: ghcr.io/drizzletime/foxel:latest|\1#image: ghcr.io/drizzletime/foxel:latest|' compose.yaml
@@ -163,7 +183,14 @@ install_new_foxel() {
         $COMPOSE_CMD pull && $COMPOSE_CMD up -d
         if [ $? -eq 0 ]; then
             local final_port=${new_port:-8088}
-            info "Foxel 部署成功！您现在可以通过 http://<您的服务器IP>:$final_port 访问它。"
+            local public_ip
+            public_ip=$(get_public_ip)
+            if [[ -z "$public_ip" ]]; then
+                public_ip="<您的服务器IP>"
+            else
+                info "检测到服务器 IP: $public_ip"
+            fi
+            info "Foxel 部署成功！您现在可以通过 http://${public_ip}:${final_port} 访问它。"
         else error "启动 Foxel 失败。请运行 'cd $foxel_dir && $COMPOSE_CMD logs' 查看日志。"; fi
     else info "操作已取消。您可以稍后进入 '$foxel_dir' 并手动运行 '$COMPOSE_CMD up -d'。"; fi
 }
@@ -173,7 +200,6 @@ get_foxel_install_dir() {
     local data_path
     data_path=$(docker inspect foxel --format='{{range .Mounts}}{{if eq .Destination "/app/data"}}{{.Source}}{{end}}{{end}}')
     if [[ -n "$data_path" ]]; then
-        # 从 /path/to/Foxel/data 推断出 /path/to/Foxel
         echo "$(dirname "$data_path")"
     fi
 }
@@ -275,7 +301,6 @@ manage_existing_installation() {
 
 # --- 主函数 ---
 main() {
-    # 清屏
     clear
     echo "================================================="
     info "欢迎使用 Foxel 一键安装与管理脚本"
@@ -285,7 +310,6 @@ main() {
     initialize_environment
     echo
 
-    # 检查是否存在名为 'foxel' 的容器来决定脚本模式
     if docker ps -a -q -f "name=^/foxel$" | grep -q .; then
         manage_existing_installation
     else
@@ -298,4 +322,3 @@ main() {
 
 # --- 脚本入口 ---
 main
-
