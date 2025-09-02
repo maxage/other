@@ -3,15 +3,15 @@
 #================================================================================
 # Foxel 一键部署与更新脚本
 #
-# 作者: Gemini
-# 版本: 1.3 (移除颜色，增强IP检测)
+# 作者: maxage
+# 版本: 1.4 (修复IP输出逻辑，区分公网/局域网)
 # 描述: 此脚本用于自动化安装、配置和管理 Foxel 项目 (使用 Docker Compose)。
 #       - 智能检测现有安装，提供安装向导和管理菜单两种模式。
 #       - 自动检测并安装依赖。
 #       - 为国内用户提供镜像源切换选项。
 #
 # 一键运行命令:
-# bash <(curl -sL https://raw.githubusercontent.com/maxage/other/main/foxel/foxel.sh)
+# bash <(curl -sL "https://raw.githubusercontent.com/maxage/other/main/foxel/foxel.sh?_=$(date +%s)")
 #================================================================================
 
 # --- 颜色定义 (已禁用以提高兼容性) ---
@@ -40,7 +40,6 @@ command_exists() {
 
 confirm_action() {
     local prompt_message="$1"
-    # 移除颜色代码
     printf "%s" "${prompt_message} (y/n): "
     read confirmation
     if [[ "$confirmation" =~ ^[Yy]$ ]]; then
@@ -50,31 +49,29 @@ confirm_action() {
     fi
 }
 
-# --- 获取公网/内网 IP ---
+# --- IP地址检测函数 (只输出IP) ---
 get_public_ip() {
-    info "正在检测服务器 IP 地址..."
-    local ip
-    # 尝试多个服务以提高可靠性，并设置超时
-    ip=$(curl -s --max-time 4 https://api.ipify.org)
-    [ -z "$ip" ] && ip=$(curl -s --max-time 4 https://ifconfig.me/ip)
-    [ -z "$ip" ] && ip=$(curl -s --max-time 4 https://icanhazip.com)
-    
-    # 如果公网 IP 获取失败，则尝试获取内网 IP
-    if [[ -z "$ip" ]]; then
-        warn "未能自动检测到公网 IP 地址, 将尝试获取内网IP。"
-        # 方案一: ip route (更可靠)
-        ip=$(ip route get 1.1.1.1 | awk -F"src " 'NR==1{print $2}' | awk '{print $1}')
-        # 方案二: hostname -I
-        if [[ -z "$ip" ]]; then
-            ip=$(hostname -I | awk '{print $1}')
-        fi
-        # 方案三: ip addr
-        if [[ -z "$ip" ]]; then
-             ip=$(ip -4 addr | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -n 1)
-        fi
-    fi
-    echo "$ip"
+    # 优先使用IPv4, 超时2秒
+    curl -4 -s --max-time 2 https://api.ipify.org || \
+    curl -4 -s --max-time 2 https://ifconfig.me/ip || \
+    curl -4 -s --max-time 2 https://icanhazip.com
 }
+
+get_private_ip() {
+    # 方案一: ip route (最可靠)
+    local ip
+    ip=$(ip -4 route get 1.1.1.1 | awk -F"src " 'NR==1{print $2}' | awk '{print $1}')
+    if [[ -n "$ip" ]]; then echo "$ip"; return; fi
+
+    # 方案二: hostname -I
+    ip=$(hostname -I | awk '{print $1}')
+    if [[ -n "$ip" ]]; then echo "$ip"; return; fi
+
+    # 方案三: ip addr
+    ip=$(ip -4 addr | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -n 1)
+    if [[ -n "$ip" ]]; then echo "$ip"; return; fi
+}
+
 
 # --- 依赖与环境检查 ---
 check_and_install_dependencies() {
@@ -201,18 +198,32 @@ install_new_foxel() {
         info "正在启动 Foxel 服务... 这可能需要一些时间来拉取镜像。"
         $COMPOSE_CMD pull && $COMPOSE_CMD up -d
         if [ $? -eq 0 ]; then
+            info "Foxel 部署成功！"
+            info "正在检测服务器IP地址..."
+            local public_ip=$(get_public_ip)
+            local private_ip=$(get_private_ip)
             local final_port=$new_port
-            local public_ip
-            public_ip=$(get_public_ip)
-            if [[ -z "$public_ip" ]]; then
-                public_ip="<您的服务器IP>"
-                warn "IP 地址自动检测失败，请手动替换。"
-            else
-                info "检测到服务器 IP: $public_ip"
+            local ip_found=false
+
+            if [[ -n "$public_ip" ]]; then
+                info "公网访问地址: http://${public_ip}:${final_port}"
+                ip_found=true
             fi
-            info "Foxel 部署成功！您现在可以通过 http://${public_ip}:${final_port} 访问它。"
-        else error "启动 Foxel 失败。请运行 'cd $foxel_dir && $COMPOSE_CMD logs' 查看日志。"; fi
-    else info "操作已取消。您可以稍后进入 '$foxel_dir' 并手动运行 '$COMPOSE_CMD up -d'。"; fi
+            if [[ -n "$private_ip" ]]; then
+                info "局域网访问地址: http://${private_ip}:${final_port}"
+                ip_found=true
+            fi
+
+            if ! $ip_found; then
+                warn "未能自动检测到服务器IP地址。"
+                info "请手动使用 http://[您的服务器IP]:${final_port} 访问它。"
+            fi
+        else 
+            error "启动 Foxel 失败。请运行 'cd $foxel_dir && $COMPOSE_CMD logs' 查看日志。"
+        fi
+    else 
+        info "操作已取消。您可以稍后进入 '$foxel_dir' 并手动运行 '$COMPOSE_CMD up -d'。"
+    fi
 }
 
 # --- 现有安装管理 ---
@@ -342,5 +353,4 @@ main() {
 
 # --- 脚本入口 ---
 main
-
 
