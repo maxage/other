@@ -10,7 +10,7 @@
 #       - 为国内用户提供镜像源切换选项。
 #
 # 一键运行命令 (假设脚本已上传到 GitHub):
-# bash <(curl -sL https://raw.githubusercontent.com/maxage/other/main/foxel-setup.sh)
+# bash <(curl -sL https://raw.githubusercontent.com/maxage/other/refs/heads/main/foxel/foxel.sh)
 #================================================================================
 
 # --- 颜色定义 ---
