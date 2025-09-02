@@ -20,9 +20,7 @@ Foxel 一键部署与管理脚本
 您只需要在您的服务器终端中运行以下一行命令即可，无需下载任何文件。
 
 一键命令
-bash <(curl -sL https://raw.githubusercontent.com/maxage/other/refs/heads/main/foxel/foxel.sh)
-
-重要提示: 请将上面的 你的GitHub用户名 和 你的仓库名 替换为您自己的 GitHub 用户名和存放 foxel-setup.sh 脚本的仓库名称。
+bash <(curl -sL [https://raw.githubusercontent.com/maxage/other/main/foxel/foxel.sh](https://raw.githubusercontent.com/maxage/other/main/foxel/foxel.sh))
 
 脚本执行流程
 环境检测：检查 Docker, Docker Compose 以及其他必要命令是否已安装。
