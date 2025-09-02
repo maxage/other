@@ -3,7 +3,7 @@
 #================================================================================
 # Foxel 一键部署与更新脚本
 #
-# 作者: Gemini
+# 作者: maxage
 # 描述: 此脚本用于自动化安装、配置和管理 Foxel 项目 (使用 Docker Compose)。
 #       - 智能检测现有安装，提供安装向导和管理菜单两种模式。
 #       - 自动检测并安装依赖。
@@ -39,8 +39,9 @@ command_exists() {
 
 confirm_action() {
     local prompt_message="$1"
-    # 使用 $'' 定义的颜色变量，read -p 可以正确显示颜色
-    read -p "${YELLOW}${prompt_message} ${NC}(y/n): " confirmation
+    # 使用 printf 提高兼容性
+    printf "%s" "${YELLOW}${prompt_message} ${NC}(y/n): "
+    read confirmation
     if [[ "$confirmation" =~ ^[Yy]$ ]]; then
         return 0 # Yes
     else
@@ -48,22 +49,24 @@ confirm_action() {
     fi
 }
 
-# --- 新增：获取公网 IP ---
+# --- 获取公网/内网 IP ---
 get_public_ip() {
     info "正在检测服务器 IP 地址..."
-    # 尝试多个服务以提高可靠性，并设置超时
     local ip
-    ip=$(curl -s --max-time 5 https://ifconfig.me/ip)
-    if [[ -z "$ip" ]]; then
-        ip=$(curl -s --max-time 5 https://api.ipify.org)
-    fi
-    if [[ -z "$ip" ]]; then
-        ip=$(curl -s --max-time 5 https://icanhazip.com)
-    fi
+    # 尝试多个服务以提高可靠性，并设置超时
+    ip=$(curl -s --max-time 4 https://api.ipify.org)
+    [ -z "$ip" ] && ip=$(curl -s --max-time 4 https://ifconfig.me/ip)
+    [ -z "$ip" ] && ip=$(curl -s --max-time 4 https://icanhazip.com)
+    
     # 如果公网 IP 获取失败，则尝试获取内网 IP
     if [[ -z "$ip" ]]; then
         warn "未能自动检测到公网 IP 地址, 将尝试获取内网IP。"
-        ip=$(ip -4 addr | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -n 1)
+        # 优先使用 hostname -I
+        ip=$(hostname -I | awk '{print $1}')
+        # 若失败，则使用 ip addr
+        if [[ -z "$ip" ]]; then
+             ip=$(ip -4 addr | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -n 1)
+        fi
     fi
     echo "$ip"
 }
@@ -155,17 +158,29 @@ install_new_foxel() {
     fi
     echo
 
+    # --- 优化：端口选择流程 ---
     local new_port
-    if confirm_action "是否需要修改默认的对外端口 8088？"; then
-        while true; do
-            read -p "请输入新的端口号 (1-65535): " new_port
-            if ! [[ "$new_port" =~ ^[0-9]+$ ]] || [ "$new_port" -lt 1 ] || [ "$new_port" -gt 65535 ]; then
-                warn "无效的端口号。"; continue;
-            fi
-            if ss -tuln | grep -q ":${new_port}\b"; then warn "端口 $new_port 已被占用。";
-            else sed -i "s/\"8088:80\"/\"$new_port:80\"/" compose.yaml; info "端口已修改为 $new_port。"; break; fi
-        done
-    else info "将使用默认端口 8088。"; fi
+    while true; do
+        read -p "请输入新的对外端口 (或直接按回车使用默认的 8088): " new_port
+        if [[ -z "$new_port" ]]; then
+            new_port="8088"
+            info "将使用默认端口 8088。"
+            break
+        fi
+
+        if ! [[ "$new_port" =~ ^[0-9]+$ ]] || [ "$new_port" -lt 1 ] || [ "$new_port" -gt 65535 ]; then
+            warn "输入无效。请输入 1-65535 之间的数字。"
+            continue
+        fi
+
+        if ss -tuln | grep -q ":${new_port}\b"; then
+            warn "端口 $new_port 已被占用，请换一个。"
+        else
+            sed -i "s/\"8088:80\"/\"$new_port:80\"/" compose.yaml
+            info "端口已成功修改为 $new_port。"
+            break
+        fi
+    done
     echo
 
     if ! confirm_action "是否需要生成新的随机密钥 (推荐)？(选择 'n' 将使用默认值)"; then
@@ -182,11 +197,12 @@ install_new_foxel() {
         info "正在启动 Foxel 服务... 这可能需要一些时间来拉取镜像。"
         $COMPOSE_CMD pull && $COMPOSE_CMD up -d
         if [ $? -eq 0 ]; then
-            local final_port=${new_port:-8088}
+            local final_port=$new_port
             local public_ip
             public_ip=$(get_public_ip)
             if [[ -z "$public_ip" ]]; then
                 public_ip="<您的服务器IP>"
+                warn "IP 地址自动检测失败，请手动替换。"
             else
                 info "检测到服务器 IP: $public_ip"
             fi
@@ -322,3 +338,4 @@ main() {
 
 # --- 脚本入口 ---
 main
+
