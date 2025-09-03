@@ -39,8 +39,9 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 echo -e "${BLUE}========================================"
-echo -e "    Termius 汉化自动更新脚本 v2.0"
+echo -e "    Termius 汉化自动更新脚本 v2.1"
 echo -e "    支持多平台和多种汉化版本"
+echo -e "    基于 ArcSurge/Termius-Pro-zh_CN"
 echo -e "========================================${NC}"
 echo ""
 
@@ -191,11 +192,27 @@ backup_original_file() {
     fi
 }
 
-# 获取最新发布标签
+# 获取最新发布标签（带重试机制）
 get_latest_release() {
     echo -e "${YELLOW}正在从 GitHub 获取最新的 Termius 发布信息...${NC}"
     
-    local latest_release_info=$(curl -s "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest")
+    local retry_count=0
+    local max_retries=3
+    local latest_release_info=""
+    
+    while [ $retry_count -lt $max_retries ]; do
+        latest_release_info=$(curl -s --connect-timeout 10 --max-time 30 "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest")
+        
+        if [ -n "$latest_release_info" ]; then
+            break
+        fi
+        
+        retry_count=$((retry_count + 1))
+        if [ $retry_count -lt $max_retries ]; then
+            echo -e "${YELLOW}网络连接失败，正在重试... ($retry_count/$max_retries)${NC}"
+            sleep 2
+        fi
+    done
     
     if [ -z "$latest_release_info" ]; then
         echo -e "${RED}错误：无法获取最新的发布信息。请检查你的网络连接。${NC}"
@@ -229,11 +246,34 @@ download_and_replace() {
     echo -e "${YELLOW}正在下载汉化文件: $new_asar_file${NC}"
     echo -e "${BLUE}下载链接: $proxy_url${NC}"
     
-    # 下载文件
-    curl -L -o "${resources_path}/${new_asar_file}" "$proxy_url"
+    # 下载文件（带重试机制）
+    local retry_count=0
+    local max_retries=3
+    local download_success=false
     
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}✔ 汉化文件下载成功${NC}"
+    while [ $retry_count -lt $max_retries ] && [ "$download_success" = false ]; do
+        curl -L --connect-timeout 30 --max-time 300 -o "${resources_path}/${new_asar_file}" "$proxy_url"
+        
+        if [ $? -eq 0 ] && [ -f "${resources_path}/${new_asar_file}" ]; then
+            download_success=true
+        else
+            retry_count=$((retry_count + 1))
+            if [ $retry_count -lt $max_retries ]; then
+                echo -e "${YELLOW}下载失败，正在重试... ($retry_count/$max_retries)${NC}"
+                sleep 3
+            fi
+        fi
+    done
+    
+    if [ "$download_success" = true ]; then
+        # 验证下载文件大小
+        local file_size=$(stat -f%z "${resources_path}/${new_asar_file}" 2>/dev/null || stat -c%s "${resources_path}/${new_asar_file}" 2>/dev/null || echo "0")
+        if [ "$file_size" -lt 1000000 ]; then  # 小于1MB可能是错误文件
+            echo -e "${RED}错误：下载的文件大小异常，可能下载失败${NC}"
+            rm -f "${resources_path}/${new_asar_file}"
+            return 1
+        fi
+        echo -e "${GREEN}✔ 汉化文件下载成功 (大小: $(($file_size / 1024 / 1024))MB)${NC}"
         
         # 删除旧的 app.asar 文件
         if [ -f "${resources_path}/app.asar" ]; then
@@ -245,6 +285,13 @@ download_and_replace() {
         
         if [ $? -eq 0 ]; then
             echo -e "${GREEN}✔ 文件替换成功${NC}"
+            
+            # 删除自动更新配置文件，防止自动更新导致汉化失效
+            if [ -f "${resources_path}/app-update.yml" ]; then
+                rm "${resources_path}/app-update.yml"
+                echo -e "${GREEN}✔ 已删除自动更新配置文件：app-update.yml${NC}"
+            fi
+            
             return 0
         else
             echo -e "${RED}错误：文件重命名失败${NC}"
@@ -399,6 +446,55 @@ main() {
     echo -e "• 如需恢复原版，请使用备份文件"
     echo ""
 }
+
+# 回滚功能
+rollback() {
+    local platform=$1
+    local resources_path=""
+    
+    case $platform in
+        "macos")
+            resources_path="/Applications/Termius.app/Contents/Resources"
+            ;;
+        "windows")
+            resources_path="C:/Users/$USER/AppData/Local/Programs/Termius/resources"
+            ;;
+        "linux")
+            resources_path="/opt/Termius/resources"
+            ;;
+    esac
+    
+    echo -e "${YELLOW}正在查找备份文件...${NC}"
+    local backup_files=($(ls -t "${resources_path}"/app.asar.backup.* 2>/dev/null))
+    
+    if [ ${#backup_files[@]} -eq 0 ]; then
+        echo -e "${RED}未找到备份文件${NC}"
+        return 1
+    fi
+    
+    echo -e "${GREEN}找到备份文件: ${backup_files[0]}${NC}"
+    read -p "是否恢复此备份？(y/N): " confirm
+    
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        cp "${backup_files[0]}" "${resources_path}/app.asar"
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}✔ 备份恢复成功${NC}"
+            if [ "$platform" = "macos" ]; then
+                apply_macos_fix "$resources_path"
+            fi
+        else
+            echo -e "${RED}备份恢复失败${NC}"
+            return 1
+        fi
+    fi
+}
+
+# 检查命令行参数
+if [ "$1" = "--rollback" ] || [ "$1" = "-r" ]; then
+    local platform=$(detect_platform)
+    rollback "$platform"
+    exit $?
+fi
 
 # 执行主程序
 main
