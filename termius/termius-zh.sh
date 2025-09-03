@@ -3,7 +3,7 @@
 # Termius 汉化自动更新脚本
 # 支持多平台和多种汉化版本选择
 # 作者: 基于 ArcSurge/Termius-Pro-zh_CN 项目
-# 版本: 2.0
+# 版本: 2.1
 # 更新日期: $(date +%Y-%m-%d)
 
 # 定义全局变量
@@ -11,25 +11,34 @@ REPO_OWNER="ArcSurge"
 REPO_NAME="Termius-Pro-zh_CN"
 GITHUB_PROXY_PREFIX="https://github.181999.xyz/"
 
-# 平台相关路径配置
-declare -A PLATFORM_PATHS=(
-    ["macos"]="/Applications/Termius.app/Contents/Resources"
-    ["windows"]="C:/Users/$USER/AppData/Local/Programs/Termius/resources"
-    ["linux"]="/opt/Termius/resources"
-)
+# 平台相关路径配置（兼容老版本bash）
+get_platform_path() {
+    case "$1" in
+        "macos") echo "/Applications/Termius.app/Contents/Resources" ;;
+        "windows") echo "C:/Users/$USER/AppData/Local/Programs/Termius/resources" ;;
+        "linux") echo "/opt/Termius/resources" ;;
+        *) echo "" ;;
+    esac
+}
 
-# 汉化版本配置
-declare -A VERSION_TYPES=(
-    ["1"]="localize"
-    ["2"]="localize-trial" 
-    ["3"]="localize-skip"
-)
+# 汉化版本配置（兼容老版本bash）
+get_version_type() {
+    case "$1" in
+        "1") echo "localize" ;;
+        "2") echo "localize-trial" ;;
+        "3") echo "localize-skip" ;;
+        *) echo "localize-trial" ;;
+    esac
+}
 
-declare -A VERSION_DESCRIPTIONS=(
-    ["1"]="仅汉化，自己有会员资格请下载此版本，普通用户也可下载"
-    ["2"]="汉化+试用，消除碍眼的Upgrade now等按钮，试用用户可下载此版本"
-    ["3"]="汉化+跳过登录，离线用户可下载此版本"
-)
+get_version_description() {
+    case "$1" in
+        "1") echo "仅汉化，自己有会员资格请下载此版本，普通用户也可下载" ;;
+        "2") echo "汉化+试用，消除碍眼的Upgrade now等按钮，试用用户可下载此版本" ;;
+        "3") echo "汉化+跳过登录，离线用户可下载此版本" ;;
+        *) echo "汉化+试用，消除碍眼的Upgrade now等按钮，试用用户可下载此版本" ;;
+    esac
+}
 
 # 颜色定义
 RED='\033[0;31m'
@@ -67,11 +76,21 @@ select_platform() {
     read -p "请输入选择 (1-3): " platform_choice
     
     case $platform_choice in
-        1) echo "macos" ;;
-        2) echo "windows" ;;
-        3) echo "linux" ;;
+        1) 
+            echo -e "${GREEN}已选择平台: macos${NC}"
+            echo "macos"
+            ;;
+        2) 
+            echo -e "${GREEN}已选择平台: windows${NC}"
+            echo "windows"
+            ;;
+        3) 
+            echo -e "${GREEN}已选择平台: linux${NC}"
+            echo "linux"
+            ;;
         *) 
             echo -e "${RED}无效选择，使用检测到的平台: $current_platform${NC}"
+            echo -e "${GREEN}已选择平台: $current_platform${NC}"
             echo "$current_platform"
             ;;
     esac
@@ -80,19 +99,15 @@ select_platform() {
 # 获取用户选择的汉化版本
 select_version_type() {
     echo -e "${YELLOW}请选择汉化版本类型：${NC}"
-    echo "1. 仅汉化 - ${VERSION_DESCRIPTIONS[1]}"
-    echo "2. 汉化+试用 - ${VERSION_DESCRIPTIONS[2]}"
-    echo "3. 汉化+跳过登录 - ${VERSION_DESCRIPTIONS[3]}"
+    echo "1. 仅汉化 - $(get_version_description "1")"
+    echo "2. 汉化+试用 - $(get_version_description "2")"
+    echo "3. 汉化+跳过登录 - $(get_version_description "3")"
     echo ""
     read -p "请输入选择 (1-3): " version_choice
     
-    case $version_choice in
-        1|2|3) echo "${VERSION_TYPES[$version_choice]}" ;;
-        *) 
-            echo -e "${RED}无效选择，使用默认版本: localize-trial${NC}"
-            echo "localize-trial"
-            ;;
-    esac
+    local version_type=$(get_version_type "$version_choice")
+    echo -e "${GREEN}已选择版本: $version_type${NC}"
+    echo "$version_type"
 }
 
 # 检查 Termius 安装路径
@@ -364,12 +379,10 @@ apply_macos_fix() {
 main() {
     # 1. 选择平台
     local platform=$(select_platform)
-    echo -e "${GREEN}已选择平台: $platform${NC}"
     echo ""
     
     # 2. 选择汉化版本
     local version_type=$(select_version_type)
-    echo -e "${GREEN}已选择版本: $version_type${NC}"
     echo ""
     
     # 3. 检查 Termius 安装
@@ -450,19 +463,7 @@ main() {
 # 回滚功能
 rollback() {
     local platform=$1
-    local resources_path=""
-    
-    case $platform in
-        "macos")
-            resources_path="/Applications/Termius.app/Contents/Resources"
-            ;;
-        "windows")
-            resources_path="C:/Users/$USER/AppData/Local/Programs/Termius/resources"
-            ;;
-        "linux")
-            resources_path="/opt/Termius/resources"
-            ;;
-    esac
+    local resources_path=$(get_platform_path "$platform")
     
     echo -e "${YELLOW}正在查找备份文件...${NC}"
     local backup_files=($(ls -t "${resources_path}"/app.asar.backup.* 2>/dev/null))
